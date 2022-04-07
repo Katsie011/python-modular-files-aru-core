@@ -14,6 +14,7 @@ Features that need to be implemented:
 """
 import os
 import dateutil.parser as dparser
+import geometry_msgs
 import rosbag
 import numpy as np
 import pandas as pd
@@ -23,6 +24,7 @@ import sys
 
 sys.path.insert(0, '/opt/ros/melodic/lib/python2.7/dist-packages/')
 import ros_numpy as rnp
+import sensor_msgs.msg
 
 
 class Dataset_Handler():
@@ -63,7 +65,6 @@ class Dataset_Handler():
         self.calib.R_rect_00 =
         self.calib.P_rect_00 = 
         """
-
 
         """
         NOTES:
@@ -191,10 +192,10 @@ def bagfile_to_dataset(path_bagfile, path_output_dataset, camera_mat=None, dist_
                 print("\t\tNo distortion matrix supplied. Defaulting to preset.")
                 dist_mat = np.array([-0.048045, 0.010493, -0.000281, -0.001232, 0.000000])
 
-            file = open(os.path.join(date_folder, "calib.txt"), 'w')
-            file.write(f"K={camera_mat}\n")
-            file.write(f"dist={dist_mat}\n")
-            file.close()
+            with open(os.path.join(date_folder, "calib.txt"), 'w') as file:
+                file.write(f"K={camera_mat}\n")
+                file.write(f"dist={dist_mat}\n")
+
             if verbose: print("\t...... Done\n")
 
         if images:
@@ -252,24 +253,21 @@ def bagfile_to_dataset(path_bagfile, path_output_dataset, camera_mat=None, dist_
 
             # Making the timestamp files:
             timestamp_path, _ = os.path.split(left_im_path)
-            left_timestamps = open(os.path.join(timestamp_path, "timestamps.txt"), 'w')
-            for l in tqdm.trange(len_left):
-                # for topic, msg, t in ros_bag.read_messages(topics=left_topic):
-                topic, msg, t = next(left_gen)
-                left_timestamps.write(str(t) + '\n')
-                bag_img = np.frombuffer(msg.data, dtype=np.uint8).reshape(msg.height, msg.width, -1)
-                if camera_mat is not None:
-                    if dist_mat is None:
-                        print("Please provide distortion coefficients")
-                        break
+            with open(os.path.join(timestamp_path, "timestamps.txt"), 'w') as left_timestamps:
+                for l in tqdm.trange(len_left):
+                    # for topic, msg, t in ros_bag.read_messages(topics=left_topic):
+                    topic, msg, t = next(left_gen)
+                    left_timestamps.write(str(t) + '\n')
+                    bag_img = np.frombuffer(msg.data, dtype=np.uint8).reshape(msg.height, msg.width, -1)
+                    if camera_mat is not None:
+                        if dist_mat is None:
+                            print("Please provide distortion coefficients")
+                            break
+                        else:
+                            out_img = cv2.undistort(bag_img, camera_mat, dist_mat)
                     else:
-                        out_img = cv2.undistort(bag_img, camera_mat, dist_mat)
-                else:
-                    out_img = bag_img
-                cv2.imwrite(os.path.join(left_im_path, str(t) + ".png"), out_img)
-
-            # Remember to close files
-            left_timestamps.close()
+                        out_img = bag_img
+                    cv2.imwrite(os.path.join(left_im_path, str(t) + ".png"), out_img)
 
             if verbose: print("\t\t- Extracting Right Images:")
             right_gen = ros_bag.read_messages(topics=right_topic)
@@ -280,29 +278,26 @@ def bagfile_to_dataset(path_bagfile, path_output_dataset, camera_mat=None, dist_
 
             # Timestamp writer
             timestamp_path, _ = os.path.split(right_im_path)
-            right_timestamps = open(os.path.join(timestamp_path, "timestamps.txt"), 'w')
+            with open(os.path.join(timestamp_path, "timestamps.txt"), 'w') as right_timestamps:
+                for right_index in tqdm.trange(len_right):
+                    # for topic, msg, t in ros_bag.read_messages(topics=topic_right):
+                    topic, msg, t = next(right_gen)
 
-            for right_index in tqdm.trange(len_right):
-                # for topic, msg, t in ros_bag.read_messages(topics=topic_right):
-                topic, msg, t = next(right_gen)
+                    right_timestamps.write(str(t) + '\n')
 
-                right_timestamps.write(str(t) + '\n')
-
-                bag_img = np.frombuffer(msg.data,
-                                        dtype=np.uint8).reshape(msg.height,
-                                                                msg.width,
-                                                                -1)
-                if camera_mat is not None:
-                    if dist_mat is None:
-                        print("Please provide distortion coefficients")
-                        break
+                    bag_img = np.frombuffer(msg.data,
+                                            dtype=np.uint8).reshape(msg.height,
+                                                                    msg.width,
+                                                                    -1)
+                    if camera_mat is not None:
+                        if dist_mat is None:
+                            print("Please provide distortion coefficients")
+                            break
+                        else:
+                            out_img = cv2.undistort(bag_img, camera_mat, dist_mat)
                     else:
-                        out_img = cv2.undistort(bag_img, camera_mat, dist_mat)
-                else:
-                    out_img = bag_img
-                cv2.imwrite(os.path.join(right_im_path, str(t) + ".png"), out_img)
-
-            right_timestamps.close()
+                        out_img = bag_img
+                    cv2.imwrite(os.path.join(right_im_path, str(t) + ".png"), out_img)
 
             if verbose: print("\n\t......Done extracting images\n")
 
@@ -341,6 +336,49 @@ def bagfile_to_dataset(path_bagfile, path_output_dataset, camera_mat=None, dist_
     print("Goodbye.")
 
 
+def read_image(msg: sensor_msgs.msg.Image, channels: int = 3):
+    """ :return img, img timestamp, read img True"""
+    img = np.frombuffer(msg.data, dtype=np.uint8).reshape(msg.height, msg.width, -1)
+    if img.shape[2] == channels:
+        return img, msg.header.stamp.secs + msg.header.stamp.nsecs * 1e-9, True
+    else:
+        raise ValueError(f'Expected {channels} channel image, got: {img.shape[2]}')
+
+
+def read_bag(bagpath, bagtopics=None, viewer=False):
+    if bagtopics is None:
+        bagtopics = ['/odometry/filtered',
+                     '/gazebo/model_states',
+                     '/camera/left/image_color',
+                     '/camera/right/image_color']
+    odom_msgs = []
+    gazebo_model_msgs = []
+    read_left = False
+    read_right = False
+    with rosbag.Bag(bagpath) as bag, tqdm(total=bag.get_message_count(bagtopics)) as pbar:
+        if bagtopics[2] not in bag.get_type_and_topic_info().topics:
+            print(f'\n{bagpath} contains no images. Exiting.')
+            sys.exit(1)
+        pbar.set_description("Reading from " + bagpath)
+        for topic, msg, t in bag.read_messages(topics=bagtopics):
+            if topic == bagtopics[0]:
+                odom_msgs.append(msg)
+            if topic == bagtopics[1]:
+                gazebo_model_msgs.append(geometry_msgs.msg.PoseStamped(header=t,
+                                                                       pose=msg.pose[msg.name.index('/')]))
+            if topic == bagtopics[2]:
+                left, left_timestamp, read_left = read_image(msg)
+            if topic == bagtopics[3]:
+                right, right_timestamp, read_right = read_image(msg)
+            if read_left and read_right and viewer:
+                cv2.imshow("Stereo Image", cv2.hconcat([left, right]))
+                cv2.waitKey(1)
+            read_left = False
+            read_right = False
+            pbar.update()
+    cv2.destroyAllWindows()
+
+
 if __name__ == "__main__":
     print("Running tests")
 
@@ -350,6 +388,7 @@ if __name__ == "__main__":
     dataset = Dataset_Handler(data_path=data_path)
 
     import matplotlib.pyplot as plt
+
     frame_list = [0, 10, 20, 100, dataset.num_frames - 10]
     for frame in frame_list:
         fig, ax = plt.subplots(1, 2)
@@ -365,6 +404,5 @@ if __name__ == "__main__":
         fig.suptitle(f"Images for frame {frame}")
 
         plt.show()
-
 
     print("Still need to formulate tests for bagfile extraction")

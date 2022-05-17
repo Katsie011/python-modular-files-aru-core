@@ -5,15 +5,17 @@ creates a detector class
 Tested and run on opencv 3.6.4
 
 """
-if ~('cv2' in dir()):
-    import cv2
+# if ~('cv2' in dir()):
+#     import cv2
+#     # print("Imported cv2")
+#
+# if ~('numpy' in dir()):
+#     import numpy as np
+#     # print("Imported numpy as np")
 
-    print("Imported cv2")
+import cv2
+import numpy as np
 
-if ~('numpy' in dir()):
-    import numpy as np
-
-    print("Imported numpy as np")
 
 
 class FeatureDetector:
@@ -26,10 +28,10 @@ class FeatureDetector:
         """
         self.detector_type = det_type
         self.num_ft = max_num_ft
-        self.kp = []
+        # self.kp = []
 
         if det_type.lower() == 'sift':
-            self.detector = cv2.xfeatures2d.SIFT_create(max_num_ft)
+            self.detector = cv2.SIFT_create(max_num_ft)
         elif det_type.lower() == 'surf':
             self.detector = cv2.xfeatures2d.SURF_create(max_num_ft)
         # elif type.lower() == 'orb':

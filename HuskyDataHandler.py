@@ -24,6 +24,7 @@ import sys
 sys.path.insert(0, '/opt/ros/melodic/lib/python2.7/dist-packages/')
 import ros_numpy as rnp
 import yaml
+from collections import namedtuple
 
 
 class Dataset_Handler():
@@ -36,6 +37,10 @@ class Dataset_Handler():
         self.right_image_path = os.path.join(self.data_path, "image_01/data")
         self.lidar_path = os.path.join(self.data_path, "velodyne_points/data")
 
+        self.has_lidar = os.path.exists(self.lidar_path)
+        self.has_right_imgs = os.path.exists(self.right_image_path)
+
+
         self.time_tolerance = time_tolerance
         self.timestamp_resolution = timestamp_resolution
 
@@ -43,32 +48,8 @@ class Dataset_Handler():
         self.right_image_files = []
         self.lidar_files = []
 
-        with open(
-                r'/home/kats/Documents/My Documents/UCT/Masters/Code/PythonMeshManipulation/mesh_pydnet/aru-calibration/ZED/left.yaml') as file:
-            left_vars = yaml.load(file, Loader=yaml.FullLoader)
-        with open(
-                r'/home/kats/Documents/My Documents/UCT/Masters/Code/PythonMeshManipulation/mesh_pydnet/aru-calibration/ZED/right.yaml') as file:
-            right_vars = yaml.load(file, Loader=yaml.FullLoader)
 
-        self.left_distortion_coefficients = np.array(left_vars['distortion_coefficients']['data']).reshape(
-            (left_vars['distortion_coefficients']['rows'], left_vars['distortion_coefficients']['cols']))
-        self.left_rectification_matrix = np.array(left_vars['rectification_matrix']['data']).reshape(
-            (left_vars['rectification_matrix']['rows'], left_vars['rectification_matrix']['cols']))
-        self.left_projection_matrix = np.array(left_vars['projection_matrix']['data']).reshape(
-            (left_vars['projection_matrix']['rows'], left_vars['projection_matrix']['cols']))
-        self.left_camera_matrix = np.array(left_vars['camera_matrix']['data']).reshape(
-            (left_vars['camera_matrix']['rows'], left_vars['camera_matrix']['cols']))
-
-        self.right_distortion_coefficients = np.array(right_vars['distortion_coefficients']['data']).reshape(
-            (right_vars['distortion_coefficients']['rows'], right_vars['distortion_coefficients']['cols']))
-        self.right_rectification_matrix = np.array(right_vars['rectification_matrix']['data']).reshape(
-            (right_vars['rectification_matrix']['rows'], right_vars['rectification_matrix']['cols']))
-        self.right_projection_matrix = np.array(right_vars['projection_matrix']['data']).reshape(
-            (right_vars['projection_matrix']['rows'], right_vars['projection_matrix']['cols']))
-        self.right_camera_matrix = np.array(right_vars['camera_matrix']['data']).reshape(
-            (right_vars['camera_matrix']['rows'], right_vars['camera_matrix']['cols']))
-
-
+        self._load_calib()
 
         # Get names of files to iterate through
         assert os.path.exists(self.left_image_path), 'Error, left images not found'
@@ -77,82 +58,160 @@ class Dataset_Handler():
         for i, f in enumerate(left_files):
             left_times[i] = int(os.path.splitext(f)[0])
 
+        # Sorting to ensure that times are ascending.
+        sort_ids = np.argsort(left_times)
+        left_times = left_times[sort_ids]
+        left_files = left_files[sort_ids]
+
         # Making an array to store matching right imgs and lidar imgs corresponding to each left.
         matches = -np.ones((len(left_files), 2), dtype=int)  # -1 if no match found
 
         # Load in the right files
-        if os.path.exists(self.right_image_path):
-            right_files = np.asarray(os.listdir(self.right_image_path), dtype=object)
-            # sorted_files =np.zeros(len(right_files), dtype=object)
+        if self.has_right_imgs and time_sync:
+            unsynced_right_files = np.asarray(os.listdir(self.right_image_path), dtype=object)
+            unsynced_right_times = -1 * np.ones(len(unsynced_right_files))
+            right_files =np.zeros(len(left_files), dtype=object)
             right_times = -1 * np.ones(len(right_files))
-            deltas = np.ones(len(right_files))
-            for i, f in enumerate(right_files):
-                right_times[i] = int(os.path.splitext(f)[0])
-                difference = np.abs(left_times - right_times[i])
-                deltas[i] = difference.min()  # Minimum time discrepancy
-                l_ind = np.argmin(difference)
-                if deltas[i] < (self.time_tolerance / self.timestamp_resolution):
-                    # only append file to sorted list if less than tolerance
-                    matches[l_ind, 0] = i
+            for i, f in enumerate(unsynced_right_files):
+                # Getting times
+                unsynced_right_times[i] = int(os.path.splitext(f)[0])
 
-        if os.path.exists(self.lidar_path):
-            lidar_files = np.asarray(os.listdir(self.lidar_path), dtype=object)
+            for i,lt in enumerate(left_times):
+                # Need to get the first image where t_right > t_left
+                # Right images are published after left but aquired simultaneously
+
+                # getting the time difference w.r.t. current right time
+                difference = unsynced_right_times -lt
+                r_ind = np.argmin(np.abs(difference))  # minimum along left times
+
+                if difference[r_ind]*timestamp_resolution < time_tolerance:
+                    # getting the first frame where right is after left (first positive time)
+                    # l_ind = np.argmin(np.abs(difference), axis=0)  # minimum along left times
+                    # deltas = left_times[l_ind] - unsynced_right_times  # Keep the time difference in an array
+                    right_files[i] = unsynced_right_files[r_ind]
+                    right_times[i] = unsynced_right_times[r_ind]
+
+                    # need to reassure that this matches all files and that right images are not published after left.
+
+                    # removing the matched file from the right files that still need to be matched
+                    # this is to avoid duplicate matches
+
+                    ind = np.ones(len(unsynced_right_files), dtype=bool)
+                    ind[r_ind] = False
+
+                    unsynced_right_files = unsynced_right_files[ind]
+                    unsynced_right_times = unsynced_right_times[ind]
+
+                else:
+                    print(f"Could not match {left_files[i]} with a right image")
+                    # this is just for dev purposes
+
+
+
+
+        if self.has_lidar and time_sync:
+            unsynced_lidar_files = np.asarray(os.listdir(self.lidar_path), dtype=object)
+            unsynced_lidar_times = -1 * np.ones(len(unsynced_lidar_files))
+            lidar_files = np.zeros(len(left_files), dtype=object)
             lidar_times = -1 * np.ones(len(lidar_files))
-            deltas = np.ones(len(lidar_files))
-            for i, f in enumerate(lidar_files):
-                lidar_times[i] = int(os.path.splitext(f)[0])
-                difference = np.abs(left_times - lidar_times[i])
-                deltas[i] = difference.min()  # Minimum time discrepancy
-                l_ind = np.argmin(difference)
-                if deltas[i] < (self.time_tolerance / self.timestamp_resolution):
-                    # only append file to sorted list if less than tolerance
-                    matches[l_ind, 1] = i
+            for i, f in enumerate(unsynced_lidar_files):
+                # Getting times
+                unsynced_lidar_times[i] = int(os.path.splitext(f)[0])
+
+            for i, lt in enumerate(left_times):
+                # Need to get the first image where t_right > t_left
+                # Right images are published after left but aquired simultaneously
+
+                # getting the time difference w.r.t. current right time
+                difference = unsynced_lidar_times - lt
+                lid_ind = np.argmin(np.abs(difference))  # minimum along left times
+
+                if difference[lid_ind] * timestamp_resolution < time_tolerance:
+                    # getting the first frame where right is after left (first positive time)
+                    # l_ind = np.argmin(np.abs(difference), axis=0)  # minimum along left times
+                    # deltas = left_times[l_ind] - unsynced_right_times  # Keep the time difference in an array
+                    lidar_files[i] = unsynced_lidar_files[lid_ind]
+                    lidar_times[i] = unsynced_lidar_times[lid_ind]
+
+                    # need to reassure that this matches all files and that right images are not published after left.
+
+                    # removing the matched file from the right files that still need to be matched
+                    # this is to avoid duplicate matches
+
+                    ind = np.ones(len(unsynced_lidar_files), dtype=bool)
+                    ind[lid_ind] = False
+
+                    unsynced_lidar_files= unsynced_lidar_files[ind]
+                    unsynced_lidar_times = unsynced_lidar_times[ind]
+
+                else:
+                    print(f"Could not match {left_files[i]} with a lidar file")
+                    # TODO Remove this once done.
+
 
         if time_sync:
-            valid = np.where(np.all(matches >= 0, axis=1))[0]  # only those with matches for all
-            self.left_image_files = left_files[valid]
-            self.times = left_times[valid]
-            if os.path.exists(self.right_image_path):
-                self.right_image_files = right_files[matches[valid, 0]]
-                self.right_times = right_times[matches[valid, 0]]
-            if os.path.exists(self.lidar_path):
-                self.lidar_files = lidar_files[matches[valid, 1]]
-                self.lidar_times = lidar_times[matches[valid, 1]]
+            # Selecting for those images where there is a matching lidar and right image
+            valid = ((right_times>0)|(self.has_right_imgs==0)) & ((lidar_times>0)|(self.has_lidar==0))
 
+            # Trimming arrays and writing to object
+
+            self.left_image_files = left_files[valid]
+            self.left_times = left_times[valid]
+            if os.path.exists(self.right_image_path):
+                self.right_image_files = right_files[valid]
+                self.right_times = right_times[valid]
+            if os.path.exists(self.lidar_path):
+                self.lidar_files = lidar_files[valid]
+                self.lidar_times = lidar_times[valid]
+
+        else:
+            # Just returning all the files that are found
+            self.left_files = np.asarray(os.listdir(self.left_image_path), dtype=object)
+            self.left_times = np.zeros(len(self.left_files))
+            for i, f in enumerate(self.left_files):
+                self.left_times[i] = int(os.path.splitext(f)[0])
+
+            if self.has_right_imgs:
+                self.right_files = np.asarray(os.listdir(self.right_image_path), dtype=object)
+                self.right_times = np.zeros(len(self.right_files))
+                for i, f in enumerate(self.right_files):
+                    self.right_times[i] = int(os.path.splitext(f)[0])
+
+            if self.has_lidar:
+                self.lidar_files = np.asarray(os.listdir(self.lidar_path), dtype=object)
+                self.lidar_times = np.zeros(len(self.lidar_files))
+                for i, f in enumerate(self.lidar_files):
+                    self.lidar_times[i] = int(os.path.splitext(f)[0])
+
+
+
+        # Setting the number of files
         self.num_frames = len(self.left_image_files)
 
+        # making the variables for rectification.
         temp_im = cv2.imread(os.path.join(self.left_image_path, self.left_image_files[0]))
         self.img_shape = temp_im.shape
         # For distortion:
-        self.left_mapx, self.left_mapy = cv2.initUndistortRectifyMap(self.left_camera_matrix,
-                                                                     self.left_distortion_coefficients.squeeze(), None,
-                                                                     self.left_projection_matrix, self.img_shape[:2][::-1]
-                                                                     ,5)
-
-        self.right_mapx, self.right_mapy = cv2.initUndistortRectifyMap(self.right_camera_matrix,
-                                                                     self.right_distortion_coefficients.squeeze(), None,
-                                                                     self.right_projection_matrix,
-                                                                     self.img_shape[:2][::-1]
+        self.left_mapx, self.left_mapy = cv2.initUndistortRectifyMap(self.calib.cam0_camera_matrix,
+                                                                     self.calib.cam0_distortion_coefficients.squeeze(), None,
+                                                                     self.calib.cam0_projection_matrix,
+                                                                     self.calib.cam0_img_shape[::-1]
                                                                      , 5)
 
+        self.right_mapx, self.right_mapy = cv2.initUndistortRectifyMap(self.calib.cam1_camera_matrix,
+                                                                       self.calib.cam1_distortion_coefficients.squeeze(),
+                                                                       None,
+                                                                       self.calib.cam1_projection_matrix,
+                                                                       self.calib.cam1_img_shape[::-1]
+                                                                       , 5)
 
-        """
-        # Calibration files
-        # TODO
-        self.calib_path = 
-        self.calib.K_cam0 = 
-        self.calib.K_cam1 = 
-        self.calib.T_cam0_cam1 = 
-        self.calib.T_cam0_velo = 
-        self.calib.R_rect_00 =
-        self.calib.P_rect_00 = 
-        """
+
 
         """
         NOTES:
         
-        - Still need to have a way of reading in calibration files for camera-to-camera calibration
-            Also need to have lidar-to-camera0 calibration files. 
+        - Calibration structure could probably be cleaned up a little. 
+            - Maybe a more nested tree
         
         - This could probably benefit from having generators built in. 
             Would allow iterating over images in loops. 
@@ -170,7 +229,6 @@ class Dataset_Handler():
         else:
             img = cv2.remap(cv2.imread(im), self.left_mapx, self.left_mapy, cv2.INTER_LINEAR)
         return img
-
 
     def get_cam1(self, frame, rectify=False):
         r"""Returns the right image at the given frame"""
@@ -191,15 +249,44 @@ class Dataset_Handler():
         file = os.path.join(self.lidar_path, self.lidar_files[frame])
         return np.load(file)
 
-    def get_times(self):
-        return self.times
+    def _load_calib(self):
+        with open(
+                r'/home/kats/Documents/My Documents/UCT/Masters/Code/PythonMeshManipulation/mesh_pydnet/aru-calibration/ZED/left.yaml') as file:
+            left_vars = yaml.load(file, Loader=yaml.FullLoader)
+        with open(
+                r'/home/kats/Documents/My Documents/UCT/Masters/Code/PythonMeshManipulation/mesh_pydnet/aru-calibration/ZED/right.yaml') as file:
+            right_vars = yaml.load(file, Loader=yaml.FullLoader)
 
-    def get_num_frames(self):
-        return self.num_frames
+        cam = {}
+        cam["cam0_img_shape"] = (left_vars["image_height"], left_vars["image_width"])
+        cam["cam0_distortion_coefficients"] = np.array(left_vars['distortion_coefficients']['data']).reshape(
+            (left_vars['distortion_coefficients']['rows'], left_vars['distortion_coefficients']['cols']))
+        cam["cam0_rectification_matrix"] = np.array(left_vars['rectification_matrix']['data']).reshape(
+            (left_vars['rectification_matrix']['rows'], left_vars['rectification_matrix']['cols']))
+        cam["cam0_projection_matrix"] = np.array(left_vars['projection_matrix']['data']).reshape(
+            (left_vars['projection_matrix']['rows'], left_vars['projection_matrix']['cols']))
+        cam["cam0_camera_matrix"] = np.array(left_vars['camera_matrix']['data']).reshape(
+            (left_vars['camera_matrix']['rows'], left_vars['camera_matrix']['cols']))
+
+        cam["cam1_img_shape"] = (right_vars["image_height"], right_vars["image_width"])
+        cam["cam1_distortion_coefficients"] = np.array(right_vars['distortion_coefficients']['data']).reshape(
+            (right_vars['distortion_coefficients']['rows'], right_vars['distortion_coefficients']['cols']))
+        cam["cam1_rectification_matrix"] = np.array(right_vars['rectification_matrix']['data']).reshape(
+            (right_vars['rectification_matrix']['rows'], right_vars['rectification_matrix']['cols']))
+        cam["cam1_projection_matrix"] = np.array(right_vars['projection_matrix']['data']).reshape(
+            (right_vars['projection_matrix']['rows'], right_vars['projection_matrix']['cols']))
+        cam["cam1_camera_matrix"] = np.array(right_vars['camera_matrix']['data']).reshape(
+            (right_vars['camera_matrix']['rows'], right_vars['camera_matrix']['cols']))
+
+        cam["baseline"] = np.array([(-cam["cam1_projection_matrix"][0, 3] / cam["cam1_camera_matrix"][0, 0]), 0, 0])
+
+        self.calib = namedtuple("calib", cam.keys())(*cam.values())
 
 
 
-def timesync_dataset(path_to_data, simulate_removal = True, seconds_tolerance = 0.1, timestamp_resolution = 1e-9, verbose=True):
+
+def timesync_dataset(path_to_data, simulate_removal=True, seconds_tolerance=0.1, timestamp_resolution=1e-9,
+                     verbose=True):
     r"""
     This is to check that an extracted dataset is timesynced.
     It will remove those files that do not sync to within the required tolerance.
@@ -207,7 +294,7 @@ def timesync_dataset(path_to_data, simulate_removal = True, seconds_tolerance = 
     import time
     # list the folders that contain data in the husky DatasetHandler() format
     import glob
-    dataset_paths = glob.glob(path_to_data+"*/image_00/data/")
+    dataset_paths = glob.glob(path_to_data + "*/image_00/data/")
 
     # for each folder:
     for d in dataset_paths:
@@ -236,21 +323,21 @@ def timesync_dataset(path_to_data, simulate_removal = True, seconds_tolerance = 
                   f"Found:\n"
                   f"\t - {len(husky_var.left_image_files)} files that are synced.")
             if len(l_diff):
-                  print(f"\t - {len(l_diff)} unsynced left files of {len(l_imgs)}.")
+                print(f"\t - {len(l_diff)} unsynced left files of {len(l_imgs)}.")
             if len(r_diff):
-                  print(f"\t - {len(r_diff)} unsynced right files of {len(r_imgs)}.")
+                print(f"\t - {len(r_diff)} unsynced right files of {len(r_imgs)}.")
             if len(lid_diff):
-                  print(f"\t - {len(lid_diff)} unsynced lidar files of {len(lid_files)}.")
+                print(f"\t - {len(lid_diff)} unsynced lidar files of {len(lid_files)}.")
             print(f"Run without the simulate_removal flag to remove.\n"
                   f"-------------------------------------------------------\n")
 
             print(f"Preview of removal:")
             if len(l_diff):
-                  print(f"Removing left img   -> {os.path.join(husky_var.left_image_path, list(l_diff)[0])}")
+                print(f"Removing left img   -> {os.path.join(husky_var.left_image_path, list(l_diff)[0])}")
             if len(r_diff):
-              print(f"Removing right img  -> {os.path.join(husky_var.right_image_path, list(r_diff)[0])}")
+                print(f"Removing right img  -> {os.path.join(husky_var.right_image_path, list(r_diff)[0])}")
             if len(lid_diff):
-              print(f"Removing lidar scan -> {os.path.join(husky_var.lidar_path, list(lid_diff)[0])}")
+                print(f"Removing lidar scan -> {os.path.join(husky_var.lidar_path, list(lid_diff)[0])}")
 
         else:
             # If not simulating:
@@ -260,9 +347,9 @@ def timesync_dataset(path_to_data, simulate_removal = True, seconds_tolerance = 
             if len(l_diff):
                 print(f"Removing left img   -> {os.path.join(husky_var.left_image_path, list(l_diff)[0])}")
             if len(r_diff):
-                  print(f"Removing right img  -> {os.path.join(husky_var.right_image_path, list(r_diff)[0])}")
+                print(f"Removing right img  -> {os.path.join(husky_var.right_image_path, list(r_diff)[0])}")
             if len(lid_diff):
-                  print(f"Removing lidar scan -> {os.path.join(husky_var.lidar_path, list(lid_diff)[0])}")
+                print(f"Removing lidar scan -> {os.path.join(husky_var.lidar_path, list(lid_diff)[0])}")
 
             print("Press ctrl+c if this is wrong\n \t.... you have 5 seconds")
             time.sleep(5)
@@ -295,7 +382,6 @@ def timesync_dataset(path_to_data, simulate_removal = True, seconds_tolerance = 
             print(f"\t - Removed {len(lid_files) - len(os.listdir(husky_var.lidar_path))} left images")
 
     # repeat for the rest of the folders with data.
-
 
     return 0
 
@@ -549,8 +635,7 @@ if __name__ == "__main__":
     # output_path = "/media/kats/Katsoulis3/Datasets/Husky/extracted_data/Calibration and Lab"
 
     bagfile_path = '/media/kats/Katsoulis3/Datasets/Husky/gucci_bags/UCT Outdoor/old_zoo'
-    output_path =  "/media/kats/Katsoulis3/Datasets/Husky/extracted_data/old_zoo/"
-
+    output_path = "/media/kats/Katsoulis3/Datasets/Husky/extracted_data/old_zoo/"
 
     # bagfile_to_dataset(bagfile_path, output_path, lidar=True, overwrite=True)
 

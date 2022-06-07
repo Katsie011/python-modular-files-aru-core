@@ -642,24 +642,3 @@ if __name__ == "__main__":
     timesync_dataset(output_path, simulate_removal=False)
     pass
 
-    # print("Testing data class")
-    # data_path = "/media/kats/Katsoulis3/Datasets/Husky/extracted_data/old_zoo/Route C/2022_05_03_14_09_01/"
-    # print(f"Looking for dataset in:{data_path}")
-    # dataset = Dataset_Handler(data_path=data_path)
-    #
-    # import matplotlib.pyplot as plt
-    # frame_list = np.arange(0, dataset.num_frames, dataset.num_frames//5)
-    # for frame in frame_list:
-    #     fig, ax = plt.subplots(1, 2)
-    #     ax[0].imshow(dataset.get_cam0(frame))
-    #     ax[1].imshow(dataset.get_cam1(frame))
-    #
-    #     ax[0].set_title("Left image")
-    #     ax[1].set_title("Right image")
-    #
-    #     ax[0].axis('off')
-    #     ax[1].axis('off')
-    #
-    #     fig.suptitle(f"Images for frame {frame}")
-    #
-    #     plt.show()

@@ -26,6 +26,24 @@ import ros_numpy as rnp
 import yaml
 from collections import namedtuple
 
+"""
+-------------------------------------------------------------------------
+Hard coded calibration files
+-------------------------------------------------------------------------
+
+    This is not the right way to do it but modify these variables to point to the location of the aru-calibration 
+    on your machine. 
+    
+    
+    CHANGE THIS FOR YOUR MACHINE:
+"""
+########################################################################################################################
+CAMERA_LEFT_CALIB_FILE = r'/home/kats/Documents/My Documents/UCT/Masters/Code/PythonMeshManipulation/mesh_pydnet/aru-calibration/ZED/left.yaml'
+CAMERA_RIGHT_CALIB_FILE = r'/home/kats/Documents/My Documents/UCT/Masters/Code/PythonMeshManipulation/mesh_pydnet/aru-calibration/ZED/right.yaml'
+########################################################################################################################
+
+
+
 
 class Dataset_Handler():
 
@@ -250,11 +268,9 @@ class Dataset_Handler():
         return np.load(file)
 
     def _load_calib(self):
-        with open(
-                r'/home/kats/Documents/My Documents/UCT/Masters/Code/PythonMeshManipulation/mesh_pydnet/aru-calibration/ZED/left.yaml') as file:
+        with open(CAMERA_LEFT_CALIB_FILE) as file:
             left_vars = yaml.load(file, Loader=yaml.FullLoader)
-        with open(
-                r'/home/kats/Documents/My Documents/UCT/Masters/Code/PythonMeshManipulation/mesh_pydnet/aru-calibration/ZED/right.yaml') as file:
+        with open(CAMERA_RIGHT_CALIB_FILE) as file:
             right_vars = yaml.load(file, Loader=yaml.FullLoader)
 
         cam = {}

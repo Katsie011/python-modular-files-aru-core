@@ -38,8 +38,8 @@ Hard coded calibration files
     CHANGE THIS FOR YOUR MACHINE:
 """
 ########################################################################################################################
-CAMERA_LEFT_CALIB_FILE = r'/home/kats/Documents/My Documents/UCT/Masters/Code/PythonMeshManipulation/mesh_pydnet/aru-calibration/ZED/left.yaml'
-CAMERA_RIGHT_CALIB_FILE = r'/home/kats/Documents/My Documents/UCT/Masters/Code/PythonMeshManipulation/mesh_pydnet/aru-calibration/ZED/right.yaml'
+CAMERA_LEFT_CALIB_FILE = r'/home/kats/Documents/My Documents/UCT/Masters/Code/PythonMeshManipulation/aru-calibration/ZED/left.yaml'
+CAMERA_RIGHT_CALIB_FILE = r'/home/kats/Documents/My Documents/UCT/Masters/Code/PythonMeshManipulation/aru-calibration/ZED/right.yaml'
 ########################################################################################################################
 
 
